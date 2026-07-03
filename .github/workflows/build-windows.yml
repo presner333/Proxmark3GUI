@@ -1,0 +1,146 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - 'config/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        include:
+          - qt_version: '5.15.2'
+            qt_arch: 'win64_msvc2019_64'
+            msvc_version: 'Visual Studio 16 2019'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: ${{ matrix.qt_version }}
+          arch: ${{ matrix.qt_arch }}
+          cache: 'true'
+      
+      - name: Install CMake
+        uses: kitware/cmake-action@v2
+        with:
+          cmake-version: '3.21.x'
+      
+      - name: Create build directory
+        run: |
+          mkdir build
+          cd build
+      
+      - name: Configure CMake
+        run: |
+          cd build
+          cmake .. -G "Visual Studio 16 2019" -A x64
+      
+      - name: Build project
+        run: |
+          cd build
+          cmake --build . --config Release -j 4
+      
+      - name: Prepare release artifacts
+        run: |
+          mkdir release_package
+          copy build\Release\Proxmark3GUI.exe release_package\
+          copy install.bat release_package\
+          copy INSTALL_GUIDE.md release_package\
+          xcopy config release_package\config\ /E /I
+      
+      - name: Create ZIP archive
+        run: |
+          powershell -Command "Compress-Archive -Path release_package -DestinationPath Proxmark3GUI_v4.21611_Windows.zip"
+      
+      - name: Get version info
+        id: version
+        run: |
+          echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "COMMIT_SHORT=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: success()
+        with:
+          files: |
+            release_package/Proxmark3GUI.exe
+            Proxmark3GUI_v4.21611_Windows.zip
+          tag_name: v4.21611-${{ steps.version.outputs.BUILD_DATE }}
+          name: Proxmark3GUI v4.21611 - ${{ steps.version.outputs.BUILD_DATE }}
+          body: |
+            # Proxmark3GUI v4.21611 BREAKMEIFYOUCAN!
+            
+            **Build Information:**
+            - Build Date: ${{ steps.version.outputs.BUILD_DATE }}
+            - Commit: ${{ steps.version.outputs.COMMIT_SHORT }}
+            
+            ## What's New
+            - ✅ Added config for Proxmark3 v4.21611
+            - ✅ New `autopwn` command
+            - ✅ New `acl` command
+            - ✅ Enhanced HF support
+            
+            ## Supported Configurations
+            - config_official.json (v3.1.0)
+            - config_rrgv4.13441.json (v4.13441)
+            - config_rrgv4.15864.json (v4.15864)
+            - config_rrgv4.16717.json (v4.16717)
+            - config_rrgv4.21611.json (v4.21611) **NEW**
+            
+            ## Installation
+            1. Download `Proxmark3GUI_v4.21611_Windows.zip`
+            2. Extract to any folder
+            3. Run `install.bat`
+            4. Restart Proxmark3GUI
+            5. Select config_rrgv4.21611 in Settings
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        if: success()
+        with:
+          name: Proxmark3GUI-artifacts
+          path: release_package
+          retention-days: 30
+
+  test-config:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Validate JSON configs
+        run: |
+          python -m json.tool config/config_official.json > nul
+          python -m json.tool config/config_rrgv4.13441.json > nul
+          python -m json.tool config/config_rrgv4.15864.json > nul
+          python -m json.tool config/config_rrgv4.16717.json > nul
+          python -m json.tool config/config_rrgv4.21611.json > nul
+          echo "All configuration files are valid JSON!"
